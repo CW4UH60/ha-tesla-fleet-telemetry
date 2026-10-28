@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.11.0 (2026-10-28)
+
+### Features
+
+* add a Home Assistant receiver add-on with private-CA mTLS termination
+* automatically use the receiver CA for bootstrap, options updates, and resync
+* reuse `/config/tesla_fleet.key` without displaying the private key
+
+### Fixes
+
+* move Tesla user token exchange and refresh to the required fleet-auth host
+
 ## [0.10.3](https://github.com/johnbr/ha-tesla-fleet-telemetry/compare/v0.10.2...v0.10.3) (2026-10-21)
 
 

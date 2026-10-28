@@ -27,9 +27,10 @@ bootstrap:
     ca_pem:
       name: CA bundle override (PEM)
       description: >
-        Override the default Let's Encrypt root bundle used as the
-        vehicle's TLS trust anchor. Only set this if your hostname uses
-        a non-LE CA.
+        Override the receiver CA used as the vehicle's TLS trust anchor.
+        Normally omitted: `/ssl/tesla-telemetry/ca.crt` from the companion
+        receiver add-on is selected automatically, with public roots as the
+        compatibility fallback.
       required: false
       selector:
         text:

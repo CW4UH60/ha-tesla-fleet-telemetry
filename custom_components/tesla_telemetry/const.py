@@ -274,17 +274,18 @@ CONF_REGION = "region"
 CONF_HOSTNAME = "hostname"
 CONF_PORT = "port"
 CONF_PRIVATE_KEY_PEM = "private_key_pem"
+CONF_USE_EXISTING_PARTNER_KEY = "use_existing_tesla_fleet_key"
 
-# WebSocket endpoint registered on HA's HTTP server. nginx proxies the
+# WebSocket endpoint registered on HA's HTTP server. The mTLS receiver proxies the
 # vehicle's mTLS WSS connection here after validating the client cert.
 WS_PATH = "/api/tesla_telemetry/ws"
 
-# Headers nginx injects after mTLS termination
+# Headers the receiver injects after mTLS termination
 HEADER_PROXY_SECRET = "X-Tesla-Proxy-Secret"
 HEADER_VERIFIED_VIN = "X-Tesla-Verified-Vin"
 
 # The WebSocket view is unauthenticated as far as HA is concerned, and it is
-# reachable on HA's own port as well as through nginx: the proxy secret is the
+# reachable on HA's own port as well as through the receiver: the proxy secret is the
 # only thing that stops a caller who can reach HA from posing as a vehicle
 # (VINs are not secret). The config flow generates 64 hex characters; this is
 # the floor it accepts for a hand-typed one.
@@ -297,7 +298,7 @@ def proxy_secret_is_strong(secret: str) -> bool:
 
 
 def proxy_secret_matches(presented: str, configured: str | None) -> bool:
-    """Constant-time check of the header nginx sent against the secret
+    """Constant-time check of the header the receiver sent against the secret
     configured for the vehicle it claims to be. An unknown vehicle
     (``configured`` is None) or an empty secret never matches."""
     if not configured:
@@ -307,8 +308,12 @@ def proxy_secret_matches(presented: str, configured: str | None) -> bool:
     )
 
 # --- Tesla Fleet API endpoints ---------------------------------------
-# User OAuth refresh (refresh_token grant). Region-agnostic.
-TESLA_USER_TOKEN_URL = "https://auth.tesla.com/oauth2/v3/token"
+# User OAuth token exchange and refresh (authorization_code / refresh_token).
+# Tesla requires server-side token calls to use fleet-auth; auth.tesla.com is
+# retained only for the browser-facing authorization step.
+TESLA_USER_TOKEN_URL = (
+    "https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/token"
+)
 
 # OAuth2 endpoints exposed via application_credentials. The token endpoint
 # is the same URL we used for refresh_token grants — Tesla's auth server

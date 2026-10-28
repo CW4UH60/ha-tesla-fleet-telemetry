@@ -60,6 +60,16 @@ def test_partner_token_url_is_global_host() -> None:
     )
 
 
+def test_user_token_exchange_uses_fleet_auth() -> None:
+    assert const.OAUTH_AUTHORIZE_URL == (
+        "https://auth.tesla.com/oauth2/v3/authorize"
+    )
+    assert const.TESLA_USER_TOKEN_URL == (
+        "https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/token"
+    )
+    assert const.OAUTH_TOKEN_URL == const.TESLA_USER_TOKEN_URL
+
+
 def test_selectable_regions_subset_of_known_regions() -> None:
     assert set(const.SELECTABLE_REGIONS) <= set(const.FLEET_API_BASE_URLS)
     assert const.REGION_CN not in const.SELECTABLE_REGIONS

@@ -187,10 +187,18 @@ async def _async_options_updated(
     if api is None:
         return
 
-    from .services import _build_telemetry_config, _stamp_last_sync
-    from .tls_ca import DEFAULT_CA_BUNDLE_PEM
+    from .services import _build_telemetry_config, _resolve_ca_pem, _stamp_last_sync
 
-    cfg = _build_telemetry_config(entry, DEFAULT_CA_BUNDLE_PEM.strip() + "\n")
+    try:
+        ca_pem = await _resolve_ca_pem(hass)
+    except Exception as err:  # noqa: BLE001 — update listeners must not raise
+        _LOGGER.warning(
+            "tesla_telemetry: options-change re-push skipped for vin=%s: %s",
+            entry.data[CONF_VIN],
+            err,
+        )
+        return
+    cfg = _build_telemetry_config(entry, ca_pem)
     try:
         result = await api.set_fleet_telemetry_config(entry.data[CONF_VIN], cfg)
     except Exception as err:  # noqa: BLE001 — never raise from an update listener

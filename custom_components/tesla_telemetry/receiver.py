@@ -1,10 +1,10 @@
 """WebSocket endpoint for the Tesla Fleet Telemetry stream.
 
-nginx (host-side) terminates TLS + mTLS for the public-facing FQDN, then
+The companion receiver add-on terminates TLS + mTLS for the public FQDN, then
 proxies the WS upgrade to ``/api/tesla_telemetry/ws`` on HA's HTTP server
 with two custom headers:
 
-  * ``X-Tesla-Proxy-Secret``  — shared secret only nginx knows; rejects any
+  * ``X-Tesla-Proxy-Secret``  — shared secret only the receiver knows; rejects any
     caller that didn't go through the proxy. Checked against the secret of
     the config entry for the claimed VIN, so each entry's own secret is in
     force (and stops being accepted once that entry is removed).

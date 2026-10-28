@@ -1,0 +1,46 @@
+worker_processes 1;
+error_log /dev/stderr warn;
+pid /run/nginx.pid;
+
+events {
+    worker_connections 64;
+}
+
+http {
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        '' close;
+    }
+
+    access_log off;
+    server_tokens off;
+
+    server {
+        listen 4443 ssl;
+        server_name __HOSTNAME__;
+
+        ssl_certificate /ssl/tesla-telemetry/server-fullchain.crt;
+        ssl_certificate_key /ssl/tesla-telemetry/server.key;
+        ssl_client_certificate /etc/nginx/tesla/prod_ca.crt;
+        ssl_verify_client on;
+        ssl_verify_depth 4;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_session_cache shared:TeslaTelemetryTLS:1m;
+        ssl_session_timeout 10m;
+
+        client_max_body_size 1m;
+
+        location / {
+            proxy_pass http://homeassistant:8123/api/tesla_telemetry/ws;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header Host homeassistant:8123;
+            proxy_set_header X-Tesla-Proxy-Secret "__PROXY_SECRET__";
+            proxy_set_header X-Tesla-Verified-Vin $ssl_client_s_dn;
+            proxy_buffering off;
+            proxy_read_timeout 86400s;
+            proxy_send_timeout 86400s;
+        }
+    }
+}
