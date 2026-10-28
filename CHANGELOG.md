@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.11.0](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/compare/v0.10.3...v0.11.0) (2026-10-28)
+
+
+### Features
+
+* add an opt-in navigate service that sends a destination to the car ([#7](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/issues/7)) ([a361a9e](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/commit/a361a9e2819123c0edb14ad3162cb8b7680c566c))
+* add EU region support in the config flow ([#2](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/issues/2)) ([d4ec372](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/commit/d4ec372af6e8d82f62fea887aeb6fecd9895dbf1))
+* give catalog-added signals a generic sensor, added and removed live ([#17](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/issues/17)) ([57c675c](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/commit/57c675c8cbcdb7b62f6d03923555bcf52db1c619))
+* stream GpsHeading as a Heading sensor and a heading attribute on Location ([#15](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/issues/15)) ([14ef883](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/commit/14ef883b090c6a32bdbcb17bb40e6bb5c84c1dfd))
+
+
+### Bug Fixes
+
+* add Let's Encrypt Gen-Y roots (YE/YR) to the default CA bundle ([f33ad2b](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/commit/f33ad2b2c20aabbdcb1bf8c8ab9b3143e4df5c44))
+* harden the telemetry endpoint and admin services ahead of HACS review ([#26](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/issues/26)) ([6ebf041](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/commit/6ebf0418bd6718ffae046a9c731f89e4d53ff8eb))
+* log an unrecognised VIN with %r so it can't forge a log line ([#21](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/issues/21)) ([5695ebb](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/commit/5695ebb8862e2ca13fd60ff65784b8635245619b))
+* request vehicle_location scope and proxy nginx root path ([#13](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/issues/13)) ([f401214](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/commit/f40121440147eede4780b94c53b44827291af87e))
+* ship a brand icon so HA and HACS show one ([c1ad735](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/commit/c1ad735175a38ab4f84a80cc6fc381008287ff81))
+* ship the upstream Apache-2.0 license with the vendored proto files ([#28](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/issues/28)) ([305db4b](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/commit/305db4b1145838db34f20e31d7b0f495bce14041))
+* stream the navigation destination at 1 s instead of 30 s ([#9](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/issues/9)) ([9b35ad6](https://github.com/CW4UH60/ha-tesla-fleet-telemetry/commit/9b35ad6e2f36654e7f665511153bf5e612361b88))
+
 ## 0.11.0 (2026-10-28)
 
 ### Features
