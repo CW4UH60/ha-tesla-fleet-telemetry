@@ -1,0 +1,24 @@
+name: Tesla Fleet Telemetry Receiver
+version: "0.1.0"
+slug: tesla_fleet_telemetry_receiver
+description: Secure mTLS receiver for Tesla Fleet Telemetry in Home Assistant
+url: https://github.com/CW4UH60/ha-tesla-fleet-telemetry
+arch:
+  - aarch64
+  - amd64
+  - armv7
+startup: services
+boot: auto
+init: false
+ports:
+  4443/tcp: 4443
+ports_description:
+  4443/tcp: Tesla vehicle mTLS telemetry
+map:
+  - ssl:rw
+options:
+  hostname: tesla-telemetry.purser.cloud
+  proxy_secret: ""
+schema:
+  hostname: str
+  proxy_secret: password

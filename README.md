@@ -10,9 +10,10 @@ arrive every few seconds while the car is awake, and discrete events (doors,
 locks, charging state) arrive the moment they change.
 
 > **This is an advanced integration.** Tesla delivers Fleet Telemetry only to
-> a publicly reachable endpoint that terminates mutual TLS. You must run a
-> reverse proxy (nginx is assumed throughout this document) and hold a Tesla
-> developer *partner* account. If you only want polled climate/charging/door
+> a publicly reachable endpoint that terminates mutual TLS. This fork includes
+> a Home Assistant add-on that provides that endpoint, but its TCP port must be
+> forwarded through your router and its hostname must resolve directly to your
+> public IP. If you only want polled climate/charging/door
 > data with no infrastructure to manage, use the official
 > [`tesla_fleet`](https://www.home-assistant.io/integrations/tesla_fleet/)
 > integration instead.
@@ -71,16 +72,17 @@ Entity IDs follow the vehicle's name, e.g. `sensor.<vehicle>_speed`,
 ## How it works
 
 ```
-┌──────────┐  mTLS WSS   ┌────────┐  HTTP (X-Tesla-* headers)  ┌────────────────┐
-│  Tesla   │ ──────────► │ nginx  │ ─────────────────────────► │ Home Assistant │
-│ Vehicle  │             │ (mTLS  │                            │ /api/tesla_    │
-│ (Hermes) │             │  term) │                            │ telemetry/ws   │
-└──────────┘             └────────┘                            └────────────────┘
+┌──────────┐  mTLS WSS   ┌────────────────┐  verified WS  ┌────────────────┐
+│  Tesla   │ ──────────► │ Receiver add-on│ ─────────────► │ Home Assistant │
+│ Vehicle  │             │ (nginx + certs)│                │ /api/tesla_    │
+│ (Hermes) │             └────────────────┘                │ telemetry/ws   │
+└──────────┘                                               └────────────────┘
 ```
 
-* **No sidecar service.** nginx terminates mTLS, then forwards the WebSocket
-  upgrade to Home Assistant's own HTTP server. The integration registers a
-  view at `/api/tesla_telemetry/ws`.
+* **Small, local receiver.** The companion add-on terminates mTLS, validates
+  Tesla's vehicle certificate, and forwards the WebSocket to Home Assistant's
+  own HTTP server. The integration registers a view at
+  `/api/tesla_telemetry/ws`.
 * **OAuth via `application_credentials`.** Home Assistant Core owns the Tesla
   OAuth token lifecycle. Each integration instance gets its own grant — no
   refresh-token contention with `tesla_fleet`.
@@ -100,7 +102,7 @@ Entity IDs follow the vehicle's name, e.g. `sensor.<vehicle>_speed`,
   untested.)
 * An **EC P-256 (secp256r1) partner key pair**, with the public key hosted at
   `https://<partner-domain>/.well-known/appspecific/com.tesla.3p.public-key.pem`.
-* A **publicly reachable reverse proxy** (nginx assumed) that:
+* A **publicly reachable TCP port** forwarded to the receiver add-on, which:
   * presents a valid TLS server certificate,
   * terminates mutual TLS, verifying the vehicle's client certificate against
     Tesla's fleet CA,
@@ -130,76 +132,44 @@ Entity IDs follow the vehicle's name, e.g. `sensor.<vehicle>_speed`,
    `https://<partner-domain>/.well-known/appspecific/com.tesla.3p.public-key.pem`.
    Keep `partner.key` — you paste it into Home Assistant later.
 
-### 2. nginx reverse proxy
+### 2. Receiver add-on and network path
 
-nginx terminates mutual TLS and forwards the WebSocket to Home Assistant.
-Download Tesla's fleet CA (`config/files/prod_ca.crt` from
-[`teslamotors/fleet-telemetry`](https://github.com/teslamotors/fleet-telemetry))
-and use it as the client-certificate trust anchor.
+1. Add this repository to **Settings → Add-ons → Add-on store → Repositories**:
+   `https://github.com/CW4UH60/ha-tesla-fleet-telemetry`.
+2. Install **Tesla Fleet Telemetry Receiver**.
+3. Set a dedicated hostname, a 64-character random proxy secret, and port
+   `4443`. Start the add-on once so it creates
+   `/ssl/tesla-telemetry/ca.crt` and its private server key.
+4. Create a DNS-only record for the hostname pointing at your public IP. Do
+   not proxy this record through a normal Cloudflare Tunnel: Tesla connects
+   with raw mutual TLS.
+5. Forward TCP `4443` on the router to TCP `4443` on the Home Assistant host.
 
-```nginx
-server {
-    listen 443 ssl;
-    http2 on;
-    server_name tesla-telemetry.example.com;
-
-    # Server certificate presented to the vehicle. Its chain must be
-    # anchored in the CA bundle pushed as fleet_telemetry_config.ca — the
-    # integration's default bundle covers Let's Encrypt and Sectigo/ZeroSSL.
-    ssl_certificate     /etc/letsencrypt/live/tesla-telemetry.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/tesla-telemetry.example.com/privkey.pem;
-
-    # Mutual TLS: require and verify the vehicle's client certificate
-    # against Tesla's fleet CA.
-    ssl_client_certificate /etc/nginx/tesla/prod_ca.crt;
-    ssl_verify_client on;
-    ssl_verify_depth 2;
-
-    # The vehicle connects to the root path (Tesla's telemetry config carries
-    # only a hostname and port), so proxy "/" to the integration's endpoint.
-    location / {
-        proxy_pass http://127.0.0.1:8123/api/tesla_telemetry/ws;
-        proxy_http_version 1.1;
-
-        # WebSocket upgrade.
-        proxy_set_header Upgrade    $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host       $host;
-
-        # Trusted only because ssl_verify_client succeeded above.
-        proxy_set_header X-Tesla-Proxy-Secret  "REPLACE-WITH-YOUR-PROXY-SECRET";
-        proxy_set_header X-Tesla-Verified-Vin  $ssl_client_s_dn;
-
-        # Telemetry streams are long-lived.
-        proxy_read_timeout 1h;
-        proxy_send_timeout 1h;
-    }
-}
-```
-
-The proxy secret is a shared string of at least 32 characters; the
-integration generates a 64-character one for you in the config flow, and you
-paste that same value into the `proxy_set_header` line above.
+The add-on downloads Tesla's production vehicle CA from a pinned commit of
+[`teslamotors/fleet-telemetry`](https://github.com/teslamotors/fleet-telemetry)
+and verifies its SHA-256 during the image build. Its own receiver CA and keys
+stay in `/ssl/tesla-telemetry`; hostname changes are backed up before
+certificates are rotated.
 
 > **Keep the proxy secret secret.** `/api/tesla_telemetry/ws` is served by
 > Home Assistant's own HTTP server, so it is reachable wherever Home Assistant
 > is — not only through nginx — and Home Assistant does not ask for a login on
 > it. The secret is what tells a real, mTLS-verified vehicle connection apart
 > from anyone else claiming a VIN (VINs are not secret). Don't publish the
-> nginx config, and if the secret leaks, delete and re-add the integration to
+> add-on config, and if the secret leaks, rotate it in both places. The add-on
 > get a new one. `proxy_set_header` replaces any `X-Tesla-*` header a client
 > sends, so nginx itself can't be used to forge them.
 
 ### 3. Install the integration
 
-[![Open this repository in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=johnbr&repository=ha-tesla-fleet-telemetry&category=integration)
+[![Open this repository in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=CW4UH60&repository=ha-tesla-fleet-telemetry&category=integration)
 
 1. In HACS, search for **Tesla Fleet Telemetry** and download it (or use the
    button above).
 2. Restart Home Assistant.
 
 If your HACS doesn't list it, add it as a custom repository first: HACS → ⋯ →
-**Custom repositories** → `https://github.com/johnbr/ha-tesla-fleet-telemetry`,
+**Custom repositories** → `https://github.com/CW4UH60/ha-tesla-fleet-telemetry`,
 type *Integration*, then continue from step 1.
 
 (Manual install: copy `custom_components/tesla_telemetry` into your Home
@@ -212,10 +182,12 @@ Assistant `config/custom_components/` directory and restart.)
 2. **Settings → Devices & Services → Add Integration → Tesla Fleet Telemetry.**
 3. Complete the Tesla OAuth login, then pick the **VIN** to track.
 4. On the **endpoint** step, enter:
-   * the public **hostname** and **port** nginx listens on,
+   * the public **hostname** and **port** the receiver add-on listens on,
    * the **partner domain** hosting your `.well-known` public key,
-   * the **proxy secret** (used in the nginx config above),
-   * the **partner private key** (`partner.key` contents from step 1).
+   * the **proxy secret** (the same value used by the add-on),
+   * **Reuse the existing Home Assistant Tesla Fleet partner key** when the
+     official integration already created `/config/tesla_fleet.key`; otherwise
+     provide the partner private key from step 1.
 
 ### 5. Bootstrap and verify
 
@@ -224,9 +196,8 @@ Assistant `config/custom_components/` directory and restart.)
 2. Run **`tesla_telemetry.get_telemetry_config`** and confirm `synced: true`
    in the response. Tesla's `synced` flag can lag several minutes behind a
    successful push.
-3. Wake the vehicle (open the Tesla app) and watch the nginx access log for
-   the telemetry vhost — a `Hermes/...` user agent connecting is the sign the
-   car has picked up the configuration. Entities begin updating shortly after.
+3. Wake the vehicle (open the Tesla app) and watch the receiver add-on log for
+   a successful WebSocket connection. Entities begin updating shortly after.
 
 ## Choosing signals
 
@@ -325,16 +296,14 @@ more than 7 days old, so no manual upkeep is required.
 
 ## Troubleshooting
 
-* **`synced: false` for a long time.** Tesla's flag lags reality. If the nginx
-  access log shows a `Hermes/...` connection, the car has the config.
-* **TLS handshake failures in the nginx error log.** The vehicle is rejecting
-  nginx's server certificate. Make sure the certificate chain is anchored in
-  the CA bundle pushed as `fleet_telemetry_config.ca` — pass a `ca_pem`
-  override to `bootstrap`/`resync_telemetry_config` if you use a CA outside
-  the default bundle.
-* **nginx connects but no entities update.** Check the `X-Tesla-Proxy-Secret`
-  header in the nginx config matches the proxy secret stored in the config
-  entry, and that `X-Tesla-Verified-Vin` carries the certificate subject.
+* **`synced: false` for a long time.** Tesla's flag lags reality. If the
+  receiver log shows a vehicle connection, the car has the config.
+* **TLS handshake failures in the receiver log.** Confirm the add-on is using
+  the same hostname configured in the integration and that
+  `/ssl/tesla-telemetry/ca.crt` existed before the last bootstrap/resync.
+* **The receiver connects but no entities update.** Check that the add-on and
+  integration use the same proxy secret. The add-on replaces both trusted
+  `X-Tesla-*` headers after validating Tesla's client certificate.
 * Enable debug logging with:
   ```yaml
   logger:

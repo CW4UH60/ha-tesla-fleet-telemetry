@@ -71,7 +71,7 @@ from .const import (
 )
 from .signals import resolve_effective_intervals
 from .tesla_api import TelemetryConfig, TelemetryFieldConfig, TeslaApi, TeslaApiError
-from .tls_ca import DEFAULT_CA_BUNDLE_PEM
+from .tls_ca import TelemetryCaError, resolve_ca_bundle
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -235,6 +235,20 @@ def _build_telemetry_config(entry: ConfigEntry, ca_pem: str) -> TelemetryConfig:
     )
 
 
+async def _resolve_ca_pem(
+    hass: HomeAssistant, override: str | None = None
+) -> str:
+    """Resolve the receiver CA without blocking Home Assistant's event loop."""
+    try:
+        ca_pem, source = await hass.async_add_executor_job(
+            resolve_ca_bundle, override
+        )
+    except TelemetryCaError as err:
+        raise HomeAssistantError(str(err)) from err
+    _LOGGER.debug("tesla_telemetry: using %s for receiver trust", source)
+    return ca_pem
+
+
 def _stamp_last_sync(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Record the unix timestamp of a successful telemetry config push.
     Survives restarts so auto-resync can decide whether to fire."""
@@ -265,7 +279,7 @@ async def _bootstrap_handler(call: ServiceCall) -> ServiceResponse:
             )
             response["partner_register_error"] = str(err)
 
-    ca_pem = (call.data.get(ATTR_CA_PEM) or DEFAULT_CA_BUNDLE_PEM).strip() + "\n"
+    ca_pem = await _resolve_ca_pem(hass, call.data.get(ATTR_CA_PEM))
     cfg = _build_telemetry_config(entry, ca_pem)
     response["telemetry_config"] = await _tesla_call(
         api.set_fleet_telemetry_config(entry.data[CONF_VIN], cfg)
@@ -283,7 +297,7 @@ async def _resync_handler(call: ServiceCall) -> ServiceResponse:
     hass = call.hass
     entry = _resolve_entry(hass, call.data.get(ATTR_ENTRY_ID))
     api = _entry_api(hass, entry)
-    ca_pem = (call.data.get(ATTR_CA_PEM) or DEFAULT_CA_BUNDLE_PEM).strip() + "\n"
+    ca_pem = await _resolve_ca_pem(hass, call.data.get(ATTR_CA_PEM))
     cfg = _build_telemetry_config(entry, ca_pem)
     response = await _tesla_call(
         api.set_fleet_telemetry_config(entry.data[CONF_VIN], cfg)
@@ -341,7 +355,7 @@ async def _set_interval_preset_handler(call: ServiceCall) -> ServiceResponse:
     entry = hass.config_entries.async_get_entry(entry.entry_id)  # type: ignore[assignment]
     assert entry is not None
 
-    ca_pem = (call.data.get(ATTR_CA_PEM) or DEFAULT_CA_BUNDLE_PEM).strip() + "\n"
+    ca_pem = await _resolve_ca_pem(hass, call.data.get(ATTR_CA_PEM))
     cfg = _build_telemetry_config(entry, ca_pem)
     try:
         response = await _tesla_call(
@@ -548,7 +562,16 @@ async def _auto_resync_if_due(hass: HomeAssistant, entry: ConfigEntry) -> None:
     except HomeAssistantError as err:
         _LOGGER.debug("tesla_telemetry: auto-resync skipped — %s", err)
         return
-    cfg = _build_telemetry_config(entry, DEFAULT_CA_BUNDLE_PEM.strip() + "\n")
+    try:
+        ca_pem = await _resolve_ca_pem(hass)
+    except HomeAssistantError as err:
+        _LOGGER.warning(
+            "tesla_telemetry: auto-resync skipped for vin=%s: %s",
+            entry.data[CONF_VIN],
+            err,
+        )
+        return
+    cfg = _build_telemetry_config(entry, ca_pem)
     try:
         result = await api.set_fleet_telemetry_config(entry.data[CONF_VIN], cfg)
     except Exception as err:  # noqa: BLE001 — never surface from a timer tick

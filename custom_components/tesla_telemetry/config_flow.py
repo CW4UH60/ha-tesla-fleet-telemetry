@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import secrets
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import aiohttp
@@ -55,6 +56,7 @@ from .const import (
     CONF_PRIVATE_KEY_PEM,
     CONF_PROXY_SECRET,
     CONF_REGION,
+    CONF_USE_EXISTING_PARTNER_KEY,
     CONF_VEHICLE_NAME,
     CONF_VIN,
     DEFAULT_ALLOW_VEHICLE_COMMANDS,
@@ -272,11 +274,26 @@ class TeslaTelemetryOAuth2FlowHandler(
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            pem_error = _validate_partner_key_pem(
-                user_input.get(CONF_PRIVATE_KEY_PEM, "")
-            )
+            partner_key_pem = user_input.get(CONF_PRIVATE_KEY_PEM, "")
+            if user_input.get(CONF_USE_EXISTING_PARTNER_KEY, False):
+                try:
+                    partner_key_pem = await self.hass.async_add_executor_job(
+                        _read_existing_partner_key,
+                        Path(self.hass.config.path("tesla_fleet.key")),
+                    )
+                except OSError:
+                    errors[CONF_USE_EXISTING_PARTNER_KEY] = (
+                        "existing_key_unavailable"
+                    )
+
+            pem_error = _validate_partner_key_pem(partner_key_pem)
             if pem_error:
-                errors[CONF_PRIVATE_KEY_PEM] = pem_error
+                key_field = (
+                    CONF_USE_EXISTING_PARTNER_KEY
+                    if user_input.get(CONF_USE_EXISTING_PARTNER_KEY, False)
+                    else CONF_PRIVATE_KEY_PEM
+                )
+                errors.setdefault(key_field, pem_error)
             # The secret is the WebSocket endpoint's only authentication.
             if not proxy_secret_is_strong(user_input.get(CONF_PROXY_SECRET, "")):
                 errors[CONF_PROXY_SECRET] = "weak_proxy_secret"
@@ -303,19 +320,29 @@ class TeslaTelemetryOAuth2FlowHandler(
                     CONF_PORT: int(user_input[CONF_PORT]),
                     CONF_PARTNER_DOMAIN: user_input[CONF_PARTNER_DOMAIN].strip(),
                     CONF_PROXY_SECRET: user_input[CONF_PROXY_SECRET].strip(),
-                    CONF_PRIVATE_KEY_PEM: user_input[CONF_PRIVATE_KEY_PEM],
+                    CONF_PRIVATE_KEY_PEM: partner_key_pem,
                 }
                 return self.async_create_entry(title=title, data=data)
 
-        # The endpoint is deployment-wide — same nginx, same partner key —
+        # The endpoint is deployment-wide — same receiver, same partner key —
         # so when the user adds a second (or later) vehicle, pre-fill the
         # form from an existing entry to make it a click-through. After a
         # validation error, keep what the user just typed instead.
         if user_input is not None:
-            suggested: dict[str, Any] = user_input
+            suggested = {
+                key: value
+                for key, value in user_input.items()
+                if key != CONF_PRIVATE_KEY_PEM
+            }
         else:
             existing = self._async_current_entries()
             suggested = dict(existing[0].data) if existing else {}
+            suggested.pop(CONF_PRIVATE_KEY_PEM, None)
+            suggested[CONF_USE_EXISTING_PARTNER_KEY] = await (
+                self.hass.async_add_executor_job(
+                    Path(self.hass.config.path("tesla_fleet.key")).is_file
+                )
+            )
 
         schema = vol.Schema(
             {
@@ -327,7 +354,11 @@ class TeslaTelemetryOAuth2FlowHandler(
                 vol.Required(
                     CONF_PROXY_SECRET, default=self._default_proxy_secret
                 ): str,
-                vol.Required(CONF_PRIVATE_KEY_PEM): selector.TextSelector(
+                vol.Required(
+                    CONF_USE_EXISTING_PARTNER_KEY,
+                    default=suggested.get(CONF_USE_EXISTING_PARTNER_KEY, False),
+                ): bool,
+                vol.Optional(CONF_PRIVATE_KEY_PEM): selector.TextSelector(
                     selector.TextSelectorConfig(multiline=True)
                 ),
             }
@@ -416,3 +447,8 @@ def _validate_partner_key_pem(pem: str) -> str | None:
     if key.curve.name != "secp256r1":
         return "wrong_curve"
     return None
+
+
+def _read_existing_partner_key(path: Path) -> str:
+    """Read the official Tesla Fleet integration's existing partner key."""
+    return path.read_text(encoding="utf-8")

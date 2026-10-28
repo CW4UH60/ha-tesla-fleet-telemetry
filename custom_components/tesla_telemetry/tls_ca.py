@@ -33,6 +33,12 @@ the published Sectigo distribution
 """
 from __future__ import annotations
 
+from pathlib import Path
+
+from cryptography import x509
+
+LOCAL_RECEIVER_CA_PATH = Path("/ssl/tesla-telemetry/ca.crt")
+
 _LE_ROOTS_PEM: str = """\
 -----BEGIN CERTIFICATE-----
 MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
@@ -214,3 +220,65 @@ jjxDah2nGN59PRbxYvnKkKj9
 # Combined default bundle. Three roots covering Let's Encrypt and the
 # USERTrust/Sectigo/ZeroSSL family.
 DEFAULT_CA_BUNDLE_PEM: str = _LE_ROOTS_PEM + USERTRUST_RSA_PEM
+
+
+class TelemetryCaError(ValueError):
+    """Raised when an explicitly present receiver CA cannot be used."""
+
+
+def resolve_ca_bundle(
+    override: str | None = None,
+    local_path: Path = LOCAL_RECEIVER_CA_PATH,
+) -> tuple[str, str]:
+    """Return the CA Tesla should trust and a non-secret source label.
+
+    An explicit service-call override wins. Otherwise, the companion receiver
+    add-on's private CA is preferred when it exists. Public roots remain a
+    compatibility fallback for deployments that terminate TLS elsewhere.
+
+    A malformed local CA is an error instead of a silent fallback: silently
+    pushing a different trust anchor would disconnect every vehicle.
+    """
+    if override and override.strip():
+        normalized = _normalize_pem(override)
+        _validate_ca_bundle(normalized, "service override")
+        return normalized, "service override"
+
+    try:
+        local_pem = local_path.read_text(encoding="ascii")
+    except FileNotFoundError:
+        return _normalize_pem(DEFAULT_CA_BUNDLE_PEM), "bundled public roots"
+    except OSError as err:
+        raise TelemetryCaError(
+            f"could not read receiver CA at {local_path}: {err}"
+        ) from err
+
+    if len(local_pem.encode("ascii")) > 64 * 1024:
+        raise TelemetryCaError(f"receiver CA at {local_path} is unexpectedly large")
+    normalized = _normalize_pem(local_pem)
+    _validate_ca_bundle(normalized, f"receiver CA at {local_path}")
+    return normalized, "receiver add-on private CA"
+
+
+def _normalize_pem(pem: str) -> str:
+    return pem.strip() + "\n"
+
+
+def _validate_ca_bundle(pem: str, source: str) -> None:
+    try:
+        certificates = x509.load_pem_x509_certificates(pem.encode("ascii"))
+    except (TypeError, ValueError) as err:
+        raise TelemetryCaError(f"{source} is not a valid PEM certificate bundle") from err
+    if not certificates:
+        raise TelemetryCaError(f"{source} contains no certificates")
+    for certificate in certificates:
+        try:
+            constraints = certificate.extensions.get_extension_for_class(
+                x509.BasicConstraints
+            ).value
+        except x509.ExtensionNotFound as err:
+            raise TelemetryCaError(
+                f"{source} contains a certificate without CA constraints"
+            ) from err
+        if not constraints.ca:
+            raise TelemetryCaError(f"{source} contains a non-CA certificate")
